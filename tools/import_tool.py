@@ -129,10 +129,11 @@ class PipelineDialog(tk.Toplevel):
         (5, 'Анализ',        'Анализ текста'),
         (6, 'Анализ',        'Анализ картинок'),
         (7, 'Перевод',       'Перевести на английский'),
-        (8, 'Копирование',   'Копирование файлов'),
+        (8, 'Перевод',       'Проверить терминологию'),
+        (9, 'Копирование',   'Копирование файлов'),
     ]
-    AI_STEPS       = {1, 2, 3, 5, 6, 7}
-    AUTO_STEPS     = {0, 8}
+    AI_STEPS       = {1, 2, 3, 5, 6, 7, 8}
+    AUTO_STEPS     = {0, 9}
     EDITABLE_STEPS = {3, 4, 7}
 
     def __init__(self, parent, filename, notes_folder, images_folder, on_done):
@@ -153,6 +154,8 @@ class PipelineDialog(tk.Toplevel):
         self._yo_original    = None
         self._spell_result   = None
         self._spell_original = None
+        self._terms_result   = None
+        self._terms_original = None
         self._text_readonly = True
 
         fm = read_frontmatter(self.notes_folder / self.filename)
@@ -281,9 +284,10 @@ class PipelineDialog(tk.Toplevel):
         self._clear()
         self.status_var.set('')
         step = self._current_step()
-        {1: self._step_fix_yo,   2: self._step_fix_spell,
-         3: self._step_fill_id,  5: self._step_text,
-         6: self._step_images,   7: self._step_translate}[step]()
+        {1: self._step_fix_yo,    2: self._step_fix_spell,
+         3: self._step_fill_id,   5: self._step_text,
+         6: self._step_images,    7: self._step_translate,
+         8: self._step_check_terms}[step]()
 
     def _run_step(self):
         if self._queue_pos >= len(self._step_queue):
@@ -304,7 +308,8 @@ class PipelineDialog(tk.Toplevel):
          5: self._step_text,
          6: self._step_images,
          7: self._step_translate,
-         8: self._step_copy}[step]()
+         8: self._step_check_terms,
+         9: self._step_copy}[step]()
 
     # ── Shared CLI runner ─────────────────────────────────────────────────────
 
@@ -634,7 +639,67 @@ class PipelineDialog(tk.Toplevel):
         self.ready_btn.config(text='Готово →', command=self._next_step)
         self._next_step()
 
-    # ── Step 8: copy ──────────────────────────────────────────────────────────
+    # ── Step 8: check English terminology ────────────────────────────────────
+
+    def _step_check_terms(self):
+        aid = self._article_id
+        if not aid:
+            aid = read_frontmatter(self.notes_folder / self.filename).get('id', '').strip()
+        en_path = EN_DIR / f'{aid}.md' if aid else None
+        if not en_path or not en_path.exists():
+            self._write('Английская версия не найдена — пропускаю.\n')
+            self._set_ready()
+            return
+        self.status_var.set('Проверяю терминологию...')
+        self._terms_original = en_path.read_text(encoding='utf-8')
+        prompt = (
+            "Review the following English math article for natural and standard mathematical terminology. "
+            "Fix any terms that are non-standard, unnatural, or unusual for English-language mathematics "
+            "(e.g. calques from Russian or awkward phrasing of standard concepts). "
+            "Preserve all LaTeX formulas unchanged. "
+            "Do not change style, structure, or meaning — only fix terminology. "
+            "Return ONLY the corrected markdown, no explanation, no code fences.\n\n"
+            + self._terms_original
+        )
+        self._run_claude_cmd(
+            ['claude', '-p', prompt],
+            on_done_msg='«Применить» — сохранить.  «Пропустить» — не сохранять.',
+            on_captured=self._on_terms_done,
+        )
+
+    def _on_terms_done(self, text):
+        self._terms_result = text.strip()
+        self.ready_btn.config(text='Применить →', command=self._apply_terms_and_next)
+        self._show_terms_diff()
+
+    def _show_terms_diff(self):
+        if not self._terms_original or not self._terms_result:
+            return
+        self._clear()
+        self.text.tag_configure('terms_change', foreground='#c0392b', font=('Segoe UI', 10, 'bold'))
+        matcher = difflib.SequenceMatcher(None, self._terms_original, self._terms_result, autojunk=False)
+        for op, i1, i2, j1, j2 in matcher.get_opcodes():
+            chunk = self._terms_result[j1:j2]
+            if op == 'equal':
+                self.text.insert('end', chunk)
+            elif op in ('replace', 'insert'):
+                self.text.insert('end', chunk, 'terms_change')
+
+    def _apply_terms_and_next(self):
+        if self._terms_result:
+            aid = self._article_id
+            if not aid:
+                aid = read_frontmatter(self.notes_folder / self.filename).get('id', '').strip()
+            try:
+                (EN_DIR / f'{aid}.md').write_text(self._terms_result, encoding='utf-8', newline='\n')
+                messagebox.showinfo('Готово', 'Исправления сохранены в en-версию.')
+            except Exception as e:
+                messagebox.showerror('Ошибка', f'Не удалось сохранить: {e}')
+                return
+        self.ready_btn.config(text='Готово →', command=self._next_step)
+        self._next_step()
+
+    # ── Step 9: copy ──────────────────────────────────────────────────────────
 
     def _step_copy(self):
         aid = self._article_id
