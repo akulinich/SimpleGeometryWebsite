@@ -1,0 +1,169 @@
+---
+import { getCollection } from 'astro:content';
+import type { Lang } from '../i18n/ui';
+import { useTranslations } from '../i18n/ui';
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const t = useTranslations(lang);
+const base = import.meta.env.BASE_URL;
+const locale = t('article.date');
+
+const articles = (await getCollection('articles', ({ data, id }) => !data.draft && id.startsWith(`${lang}/`)))
+  .sort((a, b) => b.data.date.valueOf() - a.data.date.valueOf());
+
+const allTags = Array.from(
+  new Set(articles.flatMap(a => a.data.tags ?? []))
+).sort((a, b) => a.localeCompare(b, lang));
+
+function formatDate(date: Date) {
+  return date.toLocaleDateString(locale, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+---
+
+<h1>{t('articles.heading')}</h1>
+
+<div class="articles-controls">
+  <input
+    type="search"
+    id="article-search"
+    class="articles-input"
+    placeholder={t('articles.search')}
+    autocomplete="off"
+  />
+  <input
+    type="text"
+    id="article-tag-filter"
+    class="articles-input"
+    placeholder={t('articles.tag_filter')}
+    list="article-tag-options"
+    autocomplete="off"
+  />
+  <datalist id="article-tag-options">
+    {allTags.map(tag => <option value={tag} />)}
+  </datalist>
+  <button type="button" id="article-reset" class="articles-reset">
+    {t('articles.clear')}
+  </button>
+</div>
+
+<ul class="toc-list" id="article-list">
+  {articles.map(article => {
+    const slug = article.slug.replace(`${lang}/`, '');
+    const tags = article.data.tags ?? [];
+    return (
+      <li
+        class="toc-item"
+        data-title={(article.data.title ?? slug).toLowerCase()}
+        data-tags={tags.join('|').toLowerCase()}
+      >
+        <a class="toc-title" href={`${base}/${lang}/articles/${slug}`}>
+          {article.data.title ?? slug}
+        </a>
+        <span class="toc-tags">
+          {tags.map(tag => (
+            <button type="button" class="tag tag-pick" data-tag={tag}>{tag}</button>
+          ))}
+        </span>
+        <span class="toc-date">{formatDate(article.data.date)}</span>
+      </li>
+    );
+  })}
+</ul>
+
+<p class="toc-empty" id="article-empty" hidden>{t('articles.empty')}</p>
+
+<nav class="toc-pager" id="article-pager" aria-label="Pagination" hidden>
+  <button type="button" id="page-prev" class="toc-page-btn">{t('articles.prev')}</button>
+  <span id="page-numbers" class="toc-page-numbers"></span>
+  <button type="button" id="page-next" class="toc-page-btn">{t('articles.next')}</button>
+</nav>
+
+<script>
+  const PER_PAGE = 10;
+
+  const list      = document.getElementById('article-list') as HTMLUListElement;
+  const search    = document.getElementById('article-search') as HTMLInputElement;
+  const tagInput  = document.getElementById('article-tag-filter') as HTMLInputElement;
+  const resetBtn  = document.getElementById('article-reset') as HTMLButtonElement;
+  const emptyMsg  = document.getElementById('article-empty') as HTMLParagraphElement;
+  const pager     = document.getElementById('article-pager') as HTMLElement;
+  const prevBtn   = document.getElementById('page-prev') as HTMLButtonElement;
+  const nextBtn   = document.getElementById('page-next') as HTMLButtonElement;
+  const pageNums  = document.getElementById('page-numbers') as HTMLSpanElement;
+
+  const items = Array.from(list.querySelectorAll<HTMLLIElement>('.toc-item'));
+
+  let currentPage = 0;
+  let visible: HTMLLIElement[] = items.slice();
+
+  function applyFilter() {
+    const q   = search.value.trim().toLowerCase();
+    const tag = tagInput.value.trim().toLowerCase();
+    visible = items.filter(li => {
+      const title = li.dataset.title ?? '';
+      const tags  = li.dataset.tags ?? '';
+      if (q   && !title.includes(q)) return false;
+      if (tag && !tags.split('|').some(t => t.includes(tag))) return false;
+      return true;
+    });
+    currentPage = 0;
+    render();
+  }
+
+  function render() {
+    const totalPages = Math.max(1, Math.ceil(visible.length / PER_PAGE));
+    if (currentPage >= totalPages) currentPage = totalPages - 1;
+    const start = currentPage * PER_PAGE;
+    const end   = start + PER_PAGE;
+
+    for (const li of items) li.style.display = 'none';
+    for (const li of visible.slice(start, end)) li.style.display = '';
+
+    emptyMsg.hidden = visible.length > 0;
+    pager.hidden    = totalPages <= 1;
+    prevBtn.disabled = currentPage === 0;
+    nextBtn.disabled = currentPage >= totalPages - 1;
+
+    pageNums.textContent = '';
+    for (let i = 0; i < totalPages; i++) {
+      const btn = document.createElement('button');
+      btn.type        = 'button';
+      btn.className   = 'toc-page-num' + (i === currentPage ? ' is-current' : '');
+      btn.textContent = String(i + 1);
+      btn.addEventListener('click', () => { currentPage = i; render(); });
+      pageNums.appendChild(btn);
+    }
+  }
+
+  search.addEventListener('input', applyFilter);
+  tagInput.addEventListener('input', applyFilter);
+
+  resetBtn.addEventListener('click', () => {
+    search.value = '';
+    tagInput.value = '';
+    applyFilter();
+    search.focus();
+  });
+
+  prevBtn.addEventListener('click', () => {
+    if (currentPage > 0) { currentPage--; render(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+  });
+  nextBtn.addEventListener('click', () => {
+    const totalPages = Math.ceil(visible.length / PER_PAGE);
+    if (currentPage < totalPages - 1) { currentPage++; render(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+  });
+
+  list.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement;
+    if (!target.classList.contains('tag-pick')) return;
+    e.preventDefault();
+    tagInput.value = target.dataset.tag ?? '';
+    applyFilter();
+  });
+
+  render();
+</script>
