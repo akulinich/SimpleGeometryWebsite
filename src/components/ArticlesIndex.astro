@@ -34,14 +34,17 @@ function formatDate(date: Date) {
     placeholder={t('articles.search')}
     autocomplete="off"
   />
-  <input
-    type="text"
-    id="article-tag-filter"
-    class="articles-input"
-    placeholder={t('articles.tag_filter')}
-    list="article-tag-options"
-    autocomplete="off"
-  />
+  <div class="articles-input articles-tag-field" id="article-tag-field">
+    <span class="articles-tag-chips" id="article-tag-chips"></span>
+    <input
+      type="text"
+      id="article-tag-input"
+      class="articles-tag-bare"
+      placeholder={t('articles.tag_filter')}
+      list="article-tag-options"
+      autocomplete="off"
+    />
+  </div>
   <datalist id="article-tag-options">
     {allTags.map(tag => <option value={tag} />)}
   </datalist>
@@ -87,7 +90,9 @@ function formatDate(date: Date) {
 
   const list      = document.getElementById('article-list') as HTMLUListElement;
   const search    = document.getElementById('article-search') as HTMLInputElement;
-  const tagInput  = document.getElementById('article-tag-filter') as HTMLInputElement;
+  const tagField  = document.getElementById('article-tag-field') as HTMLDivElement;
+  const tagChips  = document.getElementById('article-tag-chips') as HTMLSpanElement;
+  const tagInput  = document.getElementById('article-tag-input') as HTMLInputElement;
   const resetBtn  = document.getElementById('article-reset') as HTMLButtonElement;
   const emptyMsg  = document.getElementById('article-empty') as HTMLParagraphElement;
   const pager     = document.getElementById('article-pager') as HTMLElement;
@@ -96,18 +101,62 @@ function formatDate(date: Date) {
   const pageNums  = document.getElementById('page-numbers') as HTMLSpanElement;
 
   const items = Array.from(list.querySelectorAll<HTMLLIElement>('.toc-item'));
+  const allTagOptions = Array.from(
+    document.querySelectorAll<HTMLOptionElement>('#article-tag-options option')
+  ).map(o => o.value);
 
   let currentPage = 0;
   let visible: HTMLLIElement[] = items.slice();
+  const selectedTags = new Set<string>();
+
+  function renderChips() {
+    tagChips.textContent = '';
+    for (const tag of selectedTags) {
+      const chip = document.createElement('span');
+      chip.className = 'articles-tag-chip';
+      chip.dataset.tag = tag;
+      chip.append(document.createTextNode(tag));
+      const x = document.createElement('button');
+      x.type = 'button';
+      x.className = 'articles-tag-chip-remove';
+      x.setAttribute('aria-label', 'Remove');
+      x.textContent = '×';
+      x.addEventListener('click', (e) => {
+        e.stopPropagation();
+        selectedTags.delete(tag);
+        renderChips();
+        applyFilter();
+      });
+      chip.append(x);
+      tagChips.append(chip);
+    }
+  }
+
+  function pickMatchingTag(query: string): string | null {
+    const q = query.trim().toLowerCase();
+    if (!q) return null;
+    for (const opt of allTagOptions) if (opt.toLowerCase() === q) return opt;
+    for (const opt of allTagOptions) if (opt.toLowerCase().startsWith(q)) return opt;
+    for (const opt of allTagOptions) if (opt.toLowerCase().includes(q)) return opt;
+    return null;
+  }
+
+  function addTag(tag: string) {
+    const t = tag.trim();
+    if (!t || selectedTags.has(t)) return;
+    selectedTags.add(t);
+    renderChips();
+    applyFilter();
+  }
 
   function applyFilter() {
-    const q   = search.value.trim().toLowerCase();
-    const tag = tagInput.value.trim().toLowerCase();
+    const q = search.value.trim().toLowerCase();
+    const sel = Array.from(selectedTags).map(t => t.toLowerCase());
     visible = items.filter(li => {
       const title = li.dataset.title ?? '';
-      const tags  = li.dataset.tags ?? '';
-      if (q   && !title.includes(q)) return false;
-      if (tag && !tags.split('|').some(t => t.includes(tag))) return false;
+      const tags  = (li.dataset.tags ?? '').split('|');
+      if (q && !title.includes(q)) return false;
+      for (const s of sel) if (!tags.includes(s)) return false;
       return true;
     });
     currentPage = 0;
@@ -140,11 +189,39 @@ function formatDate(date: Date) {
   }
 
   search.addEventListener('input', applyFilter);
-  tagInput.addEventListener('input', applyFilter);
+
+  tagInput.addEventListener('input', () => {
+    const v = tagInput.value;
+    if (allTagOptions.includes(v)) {
+      addTag(v);
+      tagInput.value = '';
+    }
+  });
+  tagInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const matched = pickMatchingTag(tagInput.value);
+      if (matched) {
+        addTag(matched);
+        tagInput.value = '';
+      }
+    } else if (e.key === 'Backspace' && !tagInput.value && selectedTags.size > 0) {
+      const arr = Array.from(selectedTags);
+      const last = arr[arr.length - 1];
+      selectedTags.delete(last);
+      renderChips();
+      applyFilter();
+    }
+  });
+  tagField.addEventListener('click', (e) => {
+    if (e.target === tagField || e.target === tagChips) tagInput.focus();
+  });
 
   resetBtn.addEventListener('click', () => {
     search.value = '';
     tagInput.value = '';
+    selectedTags.clear();
+    renderChips();
     applyFilter();
     search.focus();
   });
@@ -161,8 +238,7 @@ function formatDate(date: Date) {
     const target = e.target as HTMLElement;
     if (!target.classList.contains('tag-pick')) return;
     e.preventDefault();
-    tagInput.value = target.dataset.tag ?? '';
-    applyFilter();
+    if (target.dataset.tag) addTag(target.dataset.tag);
   });
 
   render();

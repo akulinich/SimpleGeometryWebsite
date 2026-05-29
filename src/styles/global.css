@@ -339,6 +339,63 @@ figcaption {
   border-color: var(--link-hover);
 }
 
+/* Tag-field (chips + bare input) */
+.articles-tag-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem 0.45rem;
+  cursor: text;
+}
+.articles-tag-field:focus-within {
+  border-color: var(--link);
+}
+.articles-tag-chips {
+  display: contents;
+}
+.articles-tag-bare {
+  font: inherit;
+  font-size: 0.95rem;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  padding: 0.12rem 0.2rem;
+  flex: 1 1 100px;
+  min-width: 100px;
+}
+.articles-tag-bare::placeholder {
+  color: var(--muted);
+  font-style: italic;
+}
+.articles-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0.05rem 0.15rem 0.05rem 0.5rem;
+  border-radius: 2px;
+  line-height: 1.4;
+}
+.articles-tag-chip-remove {
+  font: inherit;
+  font-size: 1em;
+  line-height: 1;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 0.25rem;
+  border-radius: 2px;
+}
+.articles-tag-chip-remove:hover {
+  color: var(--link-hover);
+}
+
 .toc-empty {
   text-align: center;
   color: var(--muted);
