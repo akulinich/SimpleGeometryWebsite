@@ -10,7 +10,7 @@ import subprocess
 from pathlib import Path
 
 SETTINGS_FILE = Path(__file__).parent / 'settings.json'
-PROMPTS_DIR   = Path(__file__).parent / 'promts'
+PROMPTS_DIR   = Path(__file__).parent / 'prompts'
 PROJECT_ROOT  = Path(__file__).parent.parent.parent
 ARTICLES_DIR  = PROJECT_ROOT / 'src' / 'content' / 'articles'
 RU_DIR        = ARTICLES_DIR / 'ru'
