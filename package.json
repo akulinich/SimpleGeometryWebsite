@@ -12,7 +12,6 @@
     "katex": "^0.16.0",
     "rehype-katex": "^7.0.0",
     "remark-math": "^6.0.0",
-    "remark-wiki-link": "^2.0.0",
     "unist-util-visit": "^5.0.0"
   }
 }

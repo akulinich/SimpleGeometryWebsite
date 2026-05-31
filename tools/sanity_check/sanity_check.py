@@ -7,11 +7,11 @@ from datetime import datetime
 from pathlib import Path
 
 PROMPTS_DIR  = Path(__file__).parent / 'prompts'
-PROMPT_FILE  = PROMPTS_DIR / 'sanity.md'
+CHECKS_DIR   = PROMPTS_DIR / 'checks'
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 
-# ─── Prompt loader ───────────────────────────────────────────────────────────
+# ─── Prompt loading ──────────────────────────────────────────────────────────
 
 def load_prompt(name, **kwargs):
     text = (PROMPTS_DIR / f'{name}.md').read_text(encoding='utf-8').strip()
@@ -20,17 +20,39 @@ def load_prompt(name, **kwargs):
     return text
 
 
+def _title_of(text, fallback):
+    """First markdown heading of a check file — used as its label/category."""
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith('#'):
+            return s.lstrip('#').strip()
+    return fallback
+
+
+def discover_checks():
+    """Each *.md in prompts/checks/ is one toggleable check, ordered by name."""
+    if not CHECKS_DIR.exists():
+        return []
+    checks = []
+    for path in sorted(CHECKS_DIR.glob('*.md')):
+        text = path.read_text(encoding='utf-8').strip()
+        checks.append({'path': path, 'text': text, 'title': _title_of(text, path.stem)})
+    return checks
+
+
 # ─── App ─────────────────────────────────────────────────────────────────────
 
 class SanityApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title('Sanity Check')
-        self.geometry('820x600')
-        self.minsize(560, 400)
+        self.geometry('820x640')
+        self.minsize(560, 440)
 
         self._running = False
         self._proc = None
+        self._checks = discover_checks()
+        self._check_vars = {}
 
         self._build_ui()
 
@@ -46,7 +68,9 @@ class SanityApp(tk.Tk):
 
         ttk.Button(top, text='Очистить', command=self._clear).pack(side='left', padx=(8, 0))
 
-        ttk.Button(top, text='Открыть промпт', command=self._open_prompt).pack(side='right')
+        ttk.Button(top, text='Открыть промпты', command=self._open_prompts).pack(side='right')
+
+        self._build_checks()
 
         self.status_var = tk.StringVar(value=f'Корень проекта: {PROJECT_ROOT}')
         ttk.Label(self, textvariable=self.status_var, foreground='#666').pack(
@@ -55,6 +79,21 @@ class SanityApp(tk.Tk):
         self.output = scrolledtext.ScrolledText(
             self, wrap='word', font=('Consolas', 10), state='disabled')
         self.output.pack(fill='both', expand=True, padx=12, pady=(0, 12))
+
+    def _build_checks(self):
+        frame = ttk.LabelFrame(self, text='Проверки')
+        frame.pack(fill='x', padx=12, pady=(0, 8))
+
+        if not self._checks:
+            ttk.Label(frame, text='Файлы проверок не найдены в prompts/checks/',
+                      foreground='#a00').pack(anchor='w', padx=10, pady=6)
+            return
+
+        for i, chk in enumerate(self._checks):
+            var = tk.BooleanVar(value=True)
+            self._check_vars[chk['path']] = var
+            ttk.Checkbutton(frame, text=chk['title'], variable=var).grid(
+                row=i // 3, column=i % 3, sticky='w', padx=10, pady=3)
 
     # ── Output helpers ──────────────────────────────────────────────────────
 
@@ -82,16 +121,24 @@ class SanityApp(tk.Tk):
             Path(path).write_text(text, encoding='utf-8')
             self.status_var.set(f'Сохранено: {path}')
 
-    def _open_prompt(self):
-        if not PROMPT_FILE.exists():
-            messagebox.showerror('Ошибка', f'Не найден промпт {PROMPT_FILE}')
-            return
+    def _open_prompts(self):
         try:
-            os.startfile(PROMPT_FILE)
+            os.startfile(PROMPTS_DIR)
         except Exception as e:
-            messagebox.showerror('Ошибка', f'Не удалось открыть промпт: {e}')
+            messagebox.showerror('Ошибка', f'Не удалось открыть папку промптов: {e}')
 
     # ── Run ──────────────────────────────────────────────────────────────────
+
+    def _selected_checks(self):
+        return [c for c in self._checks if self._check_vars[c['path']].get()]
+
+    def _build_prompt(self):
+        selected = self._selected_checks()
+        if not selected:
+            return None
+        checks = '\n\n'.join(c['text'] for c in selected)
+        categories = ' / '.join(c['title'] for c in selected)
+        return load_prompt('base', checks=checks, categories=categories)
 
     def _toggle(self):
         if self._running:
@@ -100,10 +147,13 @@ class SanityApp(tk.Tk):
             self._run()
 
     def _run(self):
+        if not self._selected_checks():
+            messagebox.showwarning('Проверки', 'Выбери хотя бы одну проверку.')
+            return
         try:
-            prompt = load_prompt('sanity')
+            prompt = self._build_prompt()
         except FileNotFoundError:
-            messagebox.showerror('Ошибка', 'Не найден промпт prompts/sanity.md')
+            messagebox.showerror('Ошибка', 'Не найден каркас prompts/base.md')
             return
 
         self._clear()
