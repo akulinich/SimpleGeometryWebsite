@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { useStore } from '../model/store';
 import { exportScene, importScene } from '../io/json';
 import { PRIMITIVE_KINDS, type PrimitiveKind, type ViewMode } from '../model/types';
@@ -22,6 +22,7 @@ interface Props {
   setGizmoMode: (m: GizmoMode) => void;
   viewMode: ViewMode;
   setViewMode: (m: ViewMode) => void;
+  onHullDemo: () => Promise<void>;
 }
 
 function download(filename: string, text: string) {
@@ -33,7 +34,8 @@ function download(filename: string, text: string) {
   URL.revokeObjectURL(url);
 }
 
-export function Toolbar({ gizmoMode, setGizmoMode, viewMode, setViewMode }: Props) {
+export function Toolbar({ gizmoMode, setGizmoMode, viewMode, setViewMode, onHullDemo }: Props) {
+  const [hullBusy, setHullBusy] = useState(false);
   const addPrimitive = useStore((s) => s.addPrimitive);
   const deleteSelected = useStore((s) => s.deleteSelected);
   const undo = useStore((s) => s.undo);
@@ -46,6 +48,15 @@ export function Toolbar({ gizmoMode, setGizmoMode, viewMode, setViewMode }: Prop
   const fileInput = useRef<HTMLInputElement>(null);
 
   const onExport = () => download('scene.json', exportScene(useStore.getState().scene));
+
+  const runHull = async () => {
+    setHullBusy(true);
+    try {
+      await onHullDemo();
+    } finally {
+      setHullBusy(false);
+    }
+  };
 
   const onImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -117,6 +128,12 @@ export function Toolbar({ gizmoMode, setGizmoMode, viewMode, setViewMode }: Prop
         style={{ display: 'none' }}
         onChange={onImportFile}
       />
+
+      <span className="sb-sep" />
+      <span className="sb-group-label">C++/Wasm:</span>
+      <button className="sb-btn" onClick={runHull} disabled={hullBusy}>
+        {hullBusy ? 'Считаю…' : 'Выпуклая оболочка (демо)'}
+      </button>
     </div>
   );
 }

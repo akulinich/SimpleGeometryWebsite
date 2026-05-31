@@ -5,10 +5,21 @@ import type { ViewMode } from './model/types';
 import { Toolbar } from './ui/Toolbar';
 import { SceneTree } from './ui/SceneTree';
 import { Inspector } from './ui/Inspector';
+import { convexHull } from './geometry/client';
 import './sandbox.css';
 
 const isEditableTarget = (el: EventTarget | null) =>
   el instanceof HTMLElement && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName);
+
+// Scatter n random points on the XY plane for the hull demo.
+function randomPoints(n: number): Float32Array {
+  const a = new Float32Array(n * 2);
+  for (let i = 0; i < n; i++) {
+    a[i * 2] = (Math.random() * 2 - 1) * 5;
+    a[i * 2 + 1] = (Math.random() * 2 - 1) * 3.5;
+  }
+  return a;
+}
 
 export default function SandboxApp() {
   const viewportHost = useRef<HTMLDivElement>(null);
@@ -62,6 +73,16 @@ export default function SandboxApp() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // Full round trip: TS makes points → worker → C++/wasm hull → three.js draws.
+  const runHullDemo = async () => {
+    const vp = viewport.current;
+    if (!vp) return;
+    const points = randomPoints(40);
+    const hull = await convexHull(points);
+    setViewMode('2d');
+    vp.showHullDemo(points, hull);
+  };
+
   const base = import.meta.env.BASE_URL;
 
   return (
@@ -78,6 +99,7 @@ export default function SandboxApp() {
         setGizmoMode={setGizmoMode}
         viewMode={viewMode}
         setViewMode={setViewMode}
+        onHullDemo={runHullDemo}
       />
 
       <div className="sb-body">

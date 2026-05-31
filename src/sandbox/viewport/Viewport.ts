@@ -31,6 +31,18 @@ function makeGeometry(kind: PrimitiveKind): THREE.BufferGeometry {
   }
 }
 
+// Expand 2D [x,y, ...] into 3D positions [x,y,0, ...] for three.js buffers.
+function to3D(xy: Float32Array): Float32Array {
+  const count = xy.length / 2;
+  const out = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) {
+    out[i * 3] = xy[i * 2];
+    out[i * 3 + 1] = xy[i * 2 + 1];
+    out[i * 3 + 2] = 0;
+  }
+  return out;
+}
+
 /**
  * Imperative three.js viewport. Owns the scene graph, camera, controls and the
  * id→mesh map. The React layer never touches three.js objects directly — it
@@ -47,6 +59,7 @@ export class Viewport {
   private readonly grid: THREE.GridHelper;
   private readonly raycaster = new THREE.Raycaster();
   private readonly meshes = new Map<string, THREE.Mesh>();
+  private readonly demoGroup = new THREE.Group(); // transient hull-demo overlay
 
   private readonly resizeObserver: ResizeObserver;
   private rafId = 0;
@@ -79,6 +92,7 @@ export class Viewport {
 
     this.grid = new THREE.GridHelper(20, 20, 0x444c5a, 0x2c323c);
     this.scene.add(this.grid);
+    this.scene.add(this.demoGroup);
 
     this.gizmo = new TransformControls(this.camera, this.renderer.domElement);
     // r169+: TransformControls is not an Object3D; its visual helper is added instead.
@@ -169,6 +183,34 @@ export class Viewport {
     this.orbit.update();
   }
 
+  // ── Convex-hull demo overlay (computed in C++/wasm) ──────────────────────
+  showHullDemo(points: Float32Array, hull: Float32Array): void {
+    this.clearHullDemo();
+
+    const cloudGeom = new THREE.BufferGeometry();
+    cloudGeom.setAttribute('position', new THREE.BufferAttribute(to3D(points), 3));
+    this.demoGroup.add(
+      new THREE.Points(cloudGeom, new THREE.PointsMaterial({ color: 0xffce54, size: 0.14 })),
+    );
+
+    if (hull.length >= 4) {
+      const hullGeom = new THREE.BufferGeometry();
+      hullGeom.setAttribute('position', new THREE.BufferAttribute(to3D(hull), 3));
+      this.demoGroup.add(
+        new THREE.LineLoop(hullGeom, new THREE.LineBasicMaterial({ color: 0x4f8cff })),
+      );
+    }
+  }
+
+  clearHullDemo(): void {
+    for (const child of [...this.demoGroup.children]) {
+      this.demoGroup.remove(child);
+      const obj = child as THREE.Points | THREE.LineLoop;
+      obj.geometry.dispose();
+      (obj.material as THREE.Material).dispose();
+    }
+  }
+
   // ── Picking ──────────────────────────────────────────────────────────────
   private onPointerDown = (e: PointerEvent): void => {
     this.pointerDown = { x: e.clientX, y: e.clientY };
@@ -224,6 +266,7 @@ export class Viewport {
     this.renderer.domElement.removeEventListener('pointerup', this.onPointerUp);
     this.gizmo.dispose();
     this.orbit.dispose();
+    this.clearHullDemo();
     for (const mesh of this.meshes.values()) {
       mesh.geometry.dispose();
       (mesh.material as THREE.Material).dispose();
