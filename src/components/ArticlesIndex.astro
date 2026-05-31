@@ -61,7 +61,7 @@ const allTags = Array.from(
           {article.data.title ?? slug}
         </a>
         <span class="toc-tags">
-          {tags.map(tag => (
+          {tags.map((tag: string) => (
             <button type="button" class="tag tag-pick" data-tag={tag}>{tag}</button>
           ))}
         </span>
