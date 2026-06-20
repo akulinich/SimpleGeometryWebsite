@@ -19,7 +19,7 @@ const title = article.data.title ?? article.slug.replace(`${lang}/`, '');
     <span>{formatDate(article.data.date, lang)}</span>
     {article.data.tags.length > 0 && (
       <div class="tags">
-        {article.data.tags.map((tag: string) => <span class="tag">{tag}</span>)}
+        {article.data.tags.map(tag => <span class="tag">{tag}</span>)}
       </div>
     )}
   </div>

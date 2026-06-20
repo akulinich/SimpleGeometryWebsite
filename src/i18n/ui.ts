@@ -1,7 +1,6 @@
 export const ui = {
   en: {
     'nav.articles': 'Articles',
-    'nav.sandbox': 'Sandbox',
     'home.latest': 'Recent articles',
     'home.intro': 'Hi. My name is Alex. I am a mathematician by training and have spent the last 10+ years developing geometry software in C++. In my free time I read books and articles on mathematics and algorithms. This site is my personal collection of notes and ideas that I found interesting.',
     'articles.heading': 'Articles',
@@ -17,7 +16,6 @@ export const ui = {
   },
   ru: {
     'nav.articles': 'Статьи',
-    'nav.sandbox': 'Песочница',
     'home.latest': 'Последние статьи',
     'home.intro': 'Привет. Меня зовут Саша. Я занимаюсь разработкой программ, связанных с геометрией на C++, уже более 10 лет. Математик по образованию. В свободное время читаю книги и статьи по математике и алгоритмам. Этот сайт — мой личный сборник заметок и идей, которые показались мне интересными.',
     'articles.heading': 'Статьи',
