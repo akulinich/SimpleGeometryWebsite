@@ -24,12 +24,14 @@ src/
   i18n/ui.ts  ← static UI text
 public/images/ ← article images (shared between languages)
 tools/
-  import_tool.py  ← Obsidian import desktop app
+  import_tool/   ← Obsidian import desktop app
+  sanity_check/  ← AI code-review desktop app
 ```
 
 ## Running locally
 
 ```bash
 npm install
-npm run dev
+npm run dev      # dev server  (or: dev.cmd)
+npm run build    # build site   (or: build.cmd)
 ```
