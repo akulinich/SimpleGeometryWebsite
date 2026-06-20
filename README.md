@@ -2,7 +2,7 @@
 
 Personal notes on geometry, topology, and computational algorithms. Built as a static site in the style of a mathematical typeset book.
 
-**Live site:** https://akulinich.github.io/Simple_Geometry
+**Live site:** https://akulinich.github.io/SimpleGeometryWebsite
 
 ## Stack
 
