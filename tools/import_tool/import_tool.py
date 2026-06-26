@@ -26,21 +26,22 @@ from core import (
 
 class PipelineDialog(tk.Toplevel):
     STEP_DEFS = [
-        (0, 'Предобработка', 'Убрать фон картинок'),
-        (1, 'Предобработка', 'Заменить е → ё'),
-        (2, 'Предобработка', 'Исправить орфографию и пунктуацию'),
-        (3, 'Предобработка', 'Заполнить id'),
-        (4, 'Предобработка', 'Заполнить title'),
-        (5, 'Анализ',        'Анализ текста'),
-        (6, 'Анализ',        'Анализ картинок'),
-        (7, 'Перевод',       'Перевести на английский'),
-        (8, 'Перевод',       'Проверить терминологию'),
-        (9, 'Копирование',   'Копирование файлов'),
-        (10, 'Копирование',  'Проставить ссылки'),
+        (0,  'Предобработка', 'Убрать фон картинок'),
+        (1,  'Предобработка', 'Заменить е → ё'),
+        (2,  'Предобработка', 'Исправить орфографию и пунктуацию'),
+        (3,  'Предобработка', 'Расставить знаки $ для формул'),
+        (4,  'Предобработка', 'Заполнить id'),
+        (5,  'Предобработка', 'Заполнить title'),
+        (6,  'Анализ',        'Анализ текста'),
+        (7,  'Анализ',        'Анализ картинок'),
+        (8,  'Перевод',       'Перевести на английский'),
+        (9,  'Перевод',       'Проверить терминологию'),
+        (10, 'Копирование',   'Копирование файлов'),
+        (11, 'Копирование',   'Проставить ссылки'),
     ]
-    AI_STEPS       = {1, 2, 3, 5, 6, 7, 8}
-    AUTO_STEPS     = {0, 9, 10}
-    EDITABLE_STEPS = {3, 4, 7}
+    AI_STEPS       = {1, 2, 3, 4, 6, 7, 8, 9}
+    AUTO_STEPS     = {0, 10, 11}
+    EDITABLE_STEPS = {4, 5, 8}
 
     def __init__(self, parent, filename, notes_folder, images_folder, on_done, path_to_id=None):
         super().__init__(parent)
@@ -61,6 +62,8 @@ class PipelineDialog(tk.Toplevel):
         self._yo_original    = None
         self._spell_result   = None
         self._spell_original = None
+        self._latex_result   = None
+        self._latex_original = None
         self._terms_result   = None
         self._terms_original = None
         self._text_readonly = True
@@ -194,10 +197,10 @@ class PipelineDialog(tk.Toplevel):
         self._clear()
         self.status_var.set('')
         step = self._current_step()
-        {1: self._step_fix_yo,    2: self._step_fix_spell,
-         3: self._step_fill_id,   5: self._step_text,
-         6: self._step_images,    7: self._step_translate,
-         8: self._step_check_terms}[step]()
+        {1: self._step_fix_yo,     2: self._step_fix_spell,
+         3: self._step_fix_latex,  4: self._step_fill_id,
+         6: self._step_text,       7: self._step_images,
+         8: self._step_translate,  9: self._step_check_terms}[step]()
 
     def _run_step(self):
         step = self._current_step()
@@ -207,17 +210,18 @@ class PipelineDialog(tk.Toplevel):
         self._clear()
         self.status_var.set('')
         self._text_readonly = step not in self.EDITABLE_STEPS
-        {0: self._step_remove_bg,
-         1: self._step_fix_yo,
-         2: self._step_fix_spell,
-         3: self._step_fill_id,
-         4: self._step_fill_title,
-         5: self._step_text,
-         6: self._step_images,
-         7: self._step_translate,
-         8: self._step_check_terms,
-         9: self._step_copy,
-         10: self._step_resolve_links}[step]()
+        {0:  self._step_remove_bg,
+         1:  self._step_fix_yo,
+         2:  self._step_fix_spell,
+         3:  self._step_fix_latex,
+         4:  self._step_fill_id,
+         5:  self._step_fill_title,
+         6:  self._step_text,
+         7:  self._step_images,
+         8:  self._step_translate,
+         9:  self._step_check_terms,
+         10: self._step_copy,
+         11: self._step_resolve_links}[step]()
 
     # ── Shared CLI runner ─────────────────────────────────────────────────────
 
@@ -375,7 +379,47 @@ class PipelineDialog(tk.Toplevel):
         self.status_var.set('')
         self._step_fix_spell()
 
-    # ── Step 3: fill id ───────────────────────────────────────────────────────
+    # ── Step 3: fix LaTeX $ signs ────────────────────────────────────────────
+
+    def _step_fix_latex(self):
+        self.status_var.set('Анализирую...')
+        self._latex_original = (self.notes_folder / self.filename).read_text(encoding='utf-8')
+        prompt = load_prompt('fix_latex') + '\n\n' + self._latex_original
+        self._run_claude_cmd(
+            ['claude', '-p', prompt],
+            on_done_msg='«Применить» — сохранить в файл.  «Пропустить» — не сохранять.',
+            on_captured=self._on_latex_done,
+        )
+
+    def _on_latex_done(self, text):
+        self._latex_result = text.strip()
+        self.ready_btn.config(text='Применить →', command=self._apply_latex_and_next)
+        self._show_latex_diff()
+
+    def _show_latex_diff(self):
+        if not self._latex_original or not self._latex_result:
+            return
+        self._clear()
+        self.text.tag_configure('latex_change', foreground='#c0392b', font=('Segoe UI', 10, 'bold'))
+        matcher = difflib.SequenceMatcher(None, self._latex_original, self._latex_result, autojunk=False)
+        for op, i1, i2, j1, j2 in matcher.get_opcodes():
+            chunk = self._latex_result[j1:j2]
+            if op == 'equal':
+                self.text.insert('end', chunk)
+            elif op in ('replace', 'insert'):
+                self.text.insert('end', chunk, 'latex_change')
+
+    def _apply_latex_and_next(self):
+        if self._latex_result:
+            try:
+                (self.notes_folder / self.filename).write_text(self._latex_result, encoding='utf-8')
+                messagebox.showinfo('Готово', 'Формулы расставлены и сохранены.')
+            except Exception as e:
+                messagebox.showerror('Ошибка', f'Не удалось сохранить: {e}')
+        self.ready_btn.config(text='Готово →', command=self._next_step)
+        self._next_step()
+
+    # ── Step 4: fill id ───────────────────────────────────────────────────────
 
     def _step_fill_id(self):
         if self._article_id:
@@ -420,7 +464,7 @@ class PipelineDialog(tk.Toplevel):
         self.ready_btn.config(text='Готово →', command=self._next_step)
         self._next_step()
 
-    # ── Step 3: fill title ────────────────────────────────────────────────────
+    # ── Step 5: fill title ────────────────────────────────────────────────────
 
     def _step_fill_title(self):
         fm = read_frontmatter(self.notes_folder / self.filename)
@@ -446,7 +490,7 @@ class PipelineDialog(tk.Toplevel):
         self.ready_btn.config(text='Готово →', command=self._next_step)
         self._next_step()
 
-    # ── Step 5: text analysis ─────────────────────────────────────────────────
+    # ── Step 6: text analysis ─────────────────────────────────────────────────
 
     def _step_text(self):
         self.status_var.set('Анализирую...')
@@ -457,7 +501,7 @@ class PipelineDialog(tk.Toplevel):
             on_done_msg='Исправьте замечания и нажмите «Готово»',
         )
 
-    # ── Step 6: image analysis ────────────────────────────────────────────────
+    # ── Step 7: image analysis ────────────────────────────────────────────────
 
     def _step_images(self):
         content  = (self.notes_folder / self.filename).read_text(encoding='utf-8')
@@ -477,7 +521,7 @@ class PipelineDialog(tk.Toplevel):
             on_done_msg='Проверьте замечания и нажмите «Готово»',
         )
 
-    # ── Step 7: translate ─────────────────────────────────────────────────────
+    # ── Step 8: translate ─────────────────────────────────────────────────────
 
     def _step_translate(self):
         self.status_var.set('Перевожу...')
@@ -514,7 +558,7 @@ class PipelineDialog(tk.Toplevel):
         self.ready_btn.config(text='Готово →', command=self._next_step)
         self._next_step()
 
-    # ── Step 8: check English terminology ────────────────────────────────────
+    # ── Step 9: check English terminology ────────────────────────────────────
 
     def _step_check_terms(self):
         aid = self._article_id
@@ -566,7 +610,7 @@ class PipelineDialog(tk.Toplevel):
         self.ready_btn.config(text='Готово →', command=self._next_step)
         self._next_step()
 
-    # ── Step 9: copy ──────────────────────────────────────────────────────────
+    # ── Step 10: copy ─────────────────────────────────────────────────────────
 
     def _step_copy(self):
         aid = self._article_id
@@ -602,7 +646,7 @@ class PipelineDialog(tk.Toplevel):
             self._write(f'Ошибка: {e}\n')
             self.ready_btn.config(text='Закрыть', state='normal', command=self._finish)
 
-    # ── Step 10: resolve inter-article links ─────────────────────────────────
+    # ── Step 11: resolve inter-article links ─────────────────────────────────
 
     def _step_resolve_links(self):
         aid = self._article_id
