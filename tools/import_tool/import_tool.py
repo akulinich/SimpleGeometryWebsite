@@ -1,3 +1,4 @@
+import json
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 import difflib
@@ -22,6 +23,13 @@ from core import (
 )
 
 
+MODELS = [
+    ('Haiku 4.5',  'claude-haiku-4-5-20251001'),
+    ('Sonnet 4.6', 'claude-sonnet-4-6'),
+    ('Opus 4.8',   'claude-opus-4-8'),
+]
+DEFAULT_MODEL = 'claude-sonnet-4-6'
+
 # ─── Pipeline dialog ──────────────────────────────────────────────────────────
 
 class PipelineDialog(tk.Toplevel):
@@ -43,7 +51,8 @@ class PipelineDialog(tk.Toplevel):
     AUTO_STEPS     = {0, 10, 11}
     EDITABLE_STEPS = {4, 5, 8}
 
-    def __init__(self, parent, filename, notes_folder, images_folder, on_done, path_to_id=None):
+    def __init__(self, parent, filename, notes_folder, images_folder, on_done,
+                 path_to_id=None, model=DEFAULT_MODEL):
         super().__init__(parent)
         self.title(Path(filename).stem)
         self.geometry('760x580')
@@ -55,6 +64,7 @@ class PipelineDialog(tk.Toplevel):
         self.images_folder = Path(images_folder)
         self.on_done       = on_done
         self._path_to_id   = path_to_id or {}
+        self._model        = model
 
         self._step_queue  = []
         self._queue_pos   = 0
@@ -226,23 +236,40 @@ class PipelineDialog(tk.Toplevel):
     # ── Shared CLI runner ─────────────────────────────────────────────────────
 
     def _run_claude_cmd(self, cmd, on_done_msg='', on_captured=None):
+        if self._model:
+            cmd = [cmd[0], '--model', self._model] + cmd[1:]
+        cmd = cmd + ['--output-format', 'json']
+
         def worker():
-            output = []
+            raw_lines = []
+            error_msg = None
             try:
                 proc = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, encoding='utf-8', errors='replace')
                 for line in proc.stdout:
-                    output.append(line)
-                    self.after(0, self._write, line)
+                    raw_lines.append(line)
                 proc.wait()
             except FileNotFoundError:
-                self.after(0, self._write, 'Ошибка: команда claude не найдена.\n')
+                error_msg = 'Ошибка: команда claude не найдена.\n'
             except Exception as e:
-                self.after(0, self._write, f'Ошибка: {e}\n')
+                error_msg = f'Ошибка: {e}\n'
             finally:
-                if on_captured:
-                    self.after(0, on_captured, ''.join(output))
+                if error_msg:
+                    self.after(0, self._write, error_msg)
+                else:
+                    raw = ''.join(raw_lines)
+                    result_text = raw
+                    try:
+                        data = json.loads(raw)
+                        result_text = data.get('result', raw)
+                        meta = {k: v for k, v in data.items() if k != 'result'}
+                        print('[claude]', json.dumps(meta, ensure_ascii=False, indent=2))
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+                    self.after(0, self._write, result_text)
+                    if on_captured:
+                        self.after(0, on_captured, result_text)
                 self.after(0, self._set_ready, on_done_msg)
                 self.after(0, lambda: self.skip_btn.config(state='normal'))
         threading.Thread(target=worker, daemon=True).start()
@@ -801,6 +828,16 @@ class ImportTool(tk.Tk):
         self.status_var = tk.StringVar()
         ttk.Label(bottom, textvariable=self.status_var, foreground='gray').pack(side='left', padx=12)
 
+        saved_model = self.settings.get('model', DEFAULT_MODEL)
+        saved_name  = next((n for n, m in MODELS if m == saved_model), MODELS[1][0])
+        self.model_var = tk.StringVar(value=saved_name)
+        ttk.Label(bottom, text='Модель:').pack(side='right')
+        ttk.Combobox(
+            bottom, textvariable=self.model_var,
+            values=[n for n, _ in MODELS],
+            state='readonly', width=12,
+        ).pack(side='right', padx=(4, 0))
+
     def _browse_notes(self):
         folder = filedialog.askdirectory(title='Папка с заметками Obsidian')
         if folder:
@@ -819,12 +856,14 @@ class ImportTool(tk.Tk):
         self._apply_filter()
 
     def _save_settings(self):
+        selected_model = next((m for n, m in MODELS if n == self.model_var.get()), DEFAULT_MODEL)
         self.settings = {
             'notes_folder':      self.notes_var.get(),
             'images_folder':     self.images_var.get(),
             'show_imported':     self.show_imported_var.get(),
             'show_not_imported': self.show_not_imported_var.get(),
             'show_site_only':    self.show_site_only_var.get(),
+            'model':             selected_model,
         }
         save_settings(self.settings)
         self.status_var.set('Настройки сохранены.')
@@ -957,11 +996,13 @@ class ImportTool(tk.Tk):
             self.status_var.set('Готово.')
             return
         filename = self._queue.pop(0)
+        selected_model = next((m for n, m in MODELS if n == self.model_var.get()), DEFAULT_MODEL)
         PipelineDialog(
             self, filename,
             self.notes_var.get(), self.images_var.get(),
             on_done=self._process_next,
             path_to_id=self._path_to_id,
+            model=selected_model,
         )
 
 
