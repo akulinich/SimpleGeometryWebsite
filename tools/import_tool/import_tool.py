@@ -758,7 +758,6 @@ class ImportTool(tk.Tk):
         self._filtered   = []
         self._id_map     = {}   # {id → rel_path}
         self._path_to_id = {}   # {rel_path → id}
-        self._queue      = []
         self._build_ui()
         self._refresh_list()
 
@@ -823,7 +822,7 @@ class ImportTool(tk.Tk):
 
         bottom = ttk.Frame(self)
         bottom.pack(fill='x', padx=14, pady=(0, 14))
-        ttk.Button(bottom, text='Импортировать выбранные', command=self._import).pack(side='left')
+        ttk.Button(bottom, text='Импортировать выбранную', command=self._import).pack(side='left')
         ttk.Button(bottom, text='Удалить с сайта', command=self._delete_from_site).pack(side='left', padx=8)
         self.status_var = tk.StringVar()
         ttk.Label(bottom, textvariable=self.status_var, foreground='gray').pack(side='left', padx=12)
@@ -918,19 +917,26 @@ class ImportTool(tk.Tk):
         self.listbox.select_clear(0, 'end')
 
     def _import(self):
-        chosen     = [self._filtered[i] for i in self.listbox.curselection()]
-        importable = [(p, s, a) for p, s, a in chosen if s != 'site_only']
-        site_only  = [p for p, s, a in chosen if s == 'site_only']
-        if site_only:
+        chosen = [self._filtered[i] for i in self.listbox.curselection()]
+        if len(chosen) != 1:
+            messagebox.showwarning('Ничего не выбрано', 'Выберите ровно одну статью для импорта.')
+            return
+
+        filename, status, _ = chosen[0]
+        if status == 'site_only':
             messagebox.showinfo(
                 'Пропущено',
-                f'Пропущено {len(site_only)} статей — они есть только на сайте, источника в Obsidian нет.')
-        if not importable:
-            if not site_only:
-                messagebox.showwarning('Ничего не выбрано', 'Выберите хотя бы одну статью.')
+                'Эта статья есть только на сайте, исходника в Obsidian нет.')
             return
-        self._queue = [p for p, s, a in importable]
-        self._process_next()
+
+        selected_model = next((m for n, m in MODELS if n == self.model_var.get()), DEFAULT_MODEL)
+        PipelineDialog(
+            self, filename,
+            self.notes_var.get(), self.images_var.get(),
+            on_done=self._on_import_done,
+            path_to_id=self._path_to_id,
+            model=selected_model,
+        )
 
     def _delete_from_site(self):
         chosen    = [self._filtered[i] for i in self.listbox.curselection()]
@@ -990,21 +996,9 @@ class ImportTool(tk.Tk):
             msg += '\nОшибки:\n' + '\n'.join(errors)
         messagebox.showinfo('Готово', msg)
 
-    def _process_next(self):
-        if not self._queue:
-            self._refresh_list()
-            self.status_var.set('Готово.')
-            return
-        filename = self._queue.pop(0)
-        selected_model = next((m for n, m in MODELS if n == self.model_var.get()), DEFAULT_MODEL)
-        PipelineDialog(
-            self, filename,
-            self.notes_var.get(), self.images_var.get(),
-            on_done=self._process_next,
-            path_to_id=self._path_to_id,
-            model=selected_model,
-        )
-
+    def _on_import_done(self):
+        self._refresh_list()
+        self.status_var.set('Готово.')
 
 if __name__ == '__main__':
     app = ImportTool()
