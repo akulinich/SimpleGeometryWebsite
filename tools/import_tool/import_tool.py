@@ -12,7 +12,10 @@ from core import (
     EN_DIR,
     IMAGES_DIR,
     RU_DIR,
+    article_paths,
+    copy_article_images,
     find_images_in_md,
+    find_images_used_by_site,
     get_all_articles,
     load_prompt,
     load_settings,
@@ -52,9 +55,11 @@ class PipelineDialog(tk.Toplevel):
     EDITABLE_STEPS = {4, 5, 8}
 
     def __init__(self, parent, filename, notes_folder, images_folder, on_done,
-                 path_to_id=None, model=DEFAULT_MODEL):
+                 path_to_id=None, model=DEFAULT_MODEL, mode='import'):
         super().__init__(parent)
-        self.title(Path(filename).stem)
+        self.mode = mode
+        prefix = 'Обновление' if mode == 'update' else 'Импорт'
+        self.title(f'{prefix}: {Path(filename).stem}')
         self.geometry('760x580')
         self.resizable(True, True)
         self.grab_set()
@@ -65,6 +70,8 @@ class PipelineDialog(tk.Toplevel):
         self.on_done       = on_done
         self._path_to_id   = path_to_id or {}
         self._model        = model
+        self._old_ru_content = None
+        self._new_ru_content = None
 
         self._step_queue  = []
         self._queue_pos   = 0
@@ -99,7 +106,7 @@ class PipelineDialog(tk.Toplevel):
             ttk.Label(self._prep_frame, text=group_name,
                       font=('Segoe UI', 10, 'bold')).pack(anchor='w', padx=18, pady=(14, 2))
             for step_id, label in steps:
-                var = tk.BooleanVar(value=True)
+                var = tk.BooleanVar(value=self._default_step_enabled(step_id))
                 state = 'disabled' if step_id == 7 else 'normal'
                 ttk.Checkbutton(self._prep_frame, text=label,
                                 variable=var, state=state).pack(anchor='w', padx=36, pady=2)
@@ -109,6 +116,11 @@ class PipelineDialog(tk.Toplevel):
         btn_row.pack(anchor='w', padx=18, pady=(20, 0))
         ttk.Button(btn_row, text='Начать',   command=self._start).pack(side='left')
         ttk.Button(btn_row, text='Отменить', command=self.destroy).pack(side='left', padx=8)
+
+    def _default_step_enabled(self, step_id):
+        if self.mode == 'update':
+            return step_id in {8, 9, 10, 11}
+        return True
 
     def _show_prep(self):
         self._pipeline_frame.pack_forget()
@@ -551,6 +563,12 @@ class PipelineDialog(tk.Toplevel):
     # ── Step 8: translate ─────────────────────────────────────────────────────
 
     def _step_translate(self):
+        if self.mode == 'update':
+            self._step_update_translation()
+            return
+        self._step_full_translation()
+
+    def _step_full_translation(self):
         self.status_var.set('Перевожу...')
         content = (self.notes_folder / self.filename).read_text(encoding='utf-8')
         prompt  = load_prompt('translate') + '\n\n' + content
@@ -559,6 +577,55 @@ class PipelineDialog(tk.Toplevel):
             on_done_msg='Отредактируйте при необходимости и нажмите «Применить».',
             on_captured=self._on_translate_done,
         )
+
+    def _step_update_translation(self):
+        aid = self._article_id
+        if not aid:
+            aid = read_frontmatter(self.notes_folder / self.filename).get('id', '').strip()
+        if not aid:
+            self._write('⚠ id не задан. Пропускаю обновление английской версии.\n')
+            self._set_ready()
+            return
+
+        ru_path, en_path = article_paths(aid)
+        if not ru_path.exists():
+            self._write(f'⚠ ru/{aid}.md не найден. Пропускаю обновление английской версии.\n')
+            self._set_ready()
+            return
+
+        if not self._update_ru_changed(aid):
+            self._write('Русский markdown не изменился — английскую версию не обновляю.\n')
+            self._set_ready()
+            return
+
+        if not en_path.exists():
+            self._write(f'⚠ en/{aid}.md не найден. Выполняю полный перевод.\n\n')
+            self._step_full_translation()
+            return
+
+        self.status_var.set('Обновляю английскую версию...')
+        old_en_content = en_path.read_text(encoding='utf-8')
+        prompt = load_prompt(
+            'update_translation',
+            old_ru=self._old_ru_content,
+            new_ru=self._new_ru_content,
+            old_en=old_en_content,
+        )
+        self._run_claude_cmd(
+            ['claude', '-p', prompt],
+            on_done_msg='Отредактируйте при необходимости и нажмите «Применить».',
+            on_captured=self._on_translate_done,
+        )
+
+    def _update_ru_changed(self, aid):
+        if self._old_ru_content is None:
+            ru_path, _ = article_paths(aid)
+            if not ru_path.exists():
+                return False
+            self._old_ru_content = ru_path.read_text(encoding='utf-8')
+        if self._new_ru_content is None:
+            self._new_ru_content = (self.notes_folder / self.filename).read_text(encoding='utf-8')
+        return self._old_ru_content != self._new_ru_content
 
     def _on_translate_done(self, text):
         self._clear()
@@ -591,6 +658,10 @@ class PipelineDialog(tk.Toplevel):
         aid = self._article_id
         if not aid:
             aid = read_frontmatter(self.notes_folder / self.filename).get('id', '').strip()
+        if self.mode == 'update' and aid and not self._update_ru_changed(aid):
+            self._write('Русский markdown не изменился — проверку английской терминологии пропускаю.\n')
+            self._set_ready()
+            return
         en_path = EN_DIR / f'{aid}.md' if aid else None
         if not en_path or not en_path.exists():
             self._write('Английская версия не найдена — пропускаю.\n')
@@ -640,6 +711,12 @@ class PipelineDialog(tk.Toplevel):
     # ── Step 10: copy ─────────────────────────────────────────────────────────
 
     def _step_copy(self):
+        if self.mode == 'update':
+            self._step_copy_update()
+            return
+        self._step_copy_import()
+
+    def _step_copy_import(self):
         aid = self._article_id
         if not aid:
             aid = read_frontmatter(self.notes_folder / self.filename).get('id', '').strip()
@@ -651,22 +728,77 @@ class PipelineDialog(tk.Toplevel):
         try:
             content = (self.notes_folder / self.filename).read_text(encoding='utf-8')
             RU_DIR.mkdir(parents=True, exist_ok=True)
-            IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
             shutil.copy2(self.notes_folder / self.filename, RU_DIR / f'{aid}.md')
             self._write(f'✓  ru/{aid}.md\n')
 
-            copied, missing = [], []
-            for img in find_images_in_md(content):
-                src = self.images_folder / img
-                if src.exists():
-                    shutil.copy2(src, IMAGES_DIR / img)
-                    copied.append(img)
-                else:
-                    missing.append(img)
-
+            copied, missing = copy_article_images(content, self.images_folder)
             if copied:  self._write(f'✓  Картинки: {", ".join(copied)}\n')
             if missing: self._write(f'⚠  Не найдены: {", ".join(missing)}\n')
+
+            self.ready_btn.config(text='Готово →', state='normal', command=self._next_step)
+        except Exception as e:
+            self._write(f'Ошибка: {e}\n')
+            self.ready_btn.config(text='Закрыть', state='normal', command=self._finish)
+
+    def _step_copy_update(self):
+        aid = self._article_id
+        if not aid:
+            aid = read_frontmatter(self.notes_folder / self.filename).get('id', '').strip()
+        if not aid:
+            self._write('⚠ id не задан. Обновление невозможно.\n')
+            self.ready_btn.config(text='Закрыть', state='normal', command=self._finish)
+            return
+
+        try:
+            source_path = self.notes_folder / self.filename
+            source_fm = read_frontmatter(source_path)
+            source_id = source_fm.get('id', '').strip()
+            if source_id and source_id != aid:
+                self._write(f'⚠ id исходника "{source_id}" не совпадает с выбранной статьей "{aid}".\n')
+                self.ready_btn.config(text='Закрыть', state='normal', command=self._finish)
+                return
+
+            ru_path, _ = article_paths(aid)
+            if not ru_path.exists():
+                self._write(f'⚠ ru/{aid}.md не найден. Используйте обычный импорт.\n')
+                self.ready_btn.config(text='Закрыть', state='normal', command=self._finish)
+                return
+
+            old_content = ru_path.read_text(encoding='utf-8')
+            new_content = source_path.read_text(encoding='utf-8')
+            old_images = find_images_in_md(old_content)
+            new_images = find_images_in_md(new_content)
+
+            RU_DIR.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_path, ru_path)
+            self._write(f'✓  ru/{aid}.md обновлен\n')
+
+            copied, missing = copy_article_images(new_content, self.images_folder)
+            if copied:
+                self._write(f'✓  Картинки перезалиты: {", ".join(copied)}\n')
+            if missing:
+                self._write(f'⚠  Не найдены: {", ".join(missing)}\n')
+
+            removed_images = old_images - new_images
+            used_elsewhere = find_images_used_by_site()
+            deleted = []
+            kept = []
+            for img in sorted(removed_images):
+                if img in used_elsewhere:
+                    kept.append(img)
+                    continue
+                img_path = IMAGES_DIR / img
+                if img_path.exists():
+                    img_path.unlink()
+                    deleted.append(img)
+
+            if deleted:
+                self._write(f'✓  Неиспользуемые картинки удалены: {", ".join(deleted)}\n')
+            if kept:
+                self._write(f'ℹ  Оставлены, используются на сайте: {", ".join(kept)}\n')
+            if not copied and not missing and not deleted and not kept:
+                self._write('Картинок для обновления нет.\n')
 
             self.ready_btn.config(text='Готово →', state='normal', command=self._next_step)
         except Exception as e:
@@ -823,6 +955,7 @@ class ImportTool(tk.Tk):
         bottom = ttk.Frame(self)
         bottom.pack(fill='x', padx=14, pady=(0, 14))
         ttk.Button(bottom, text='Импортировать выбранную', command=self._import).pack(side='left')
+        ttk.Button(bottom, text='Обновить выбранную', command=self._update).pack(side='left', padx=(8, 0))
         ttk.Button(bottom, text='Удалить с сайта', command=self._delete_from_site).pack(side='left', padx=8)
         self.status_var = tk.StringVar()
         ttk.Label(bottom, textvariable=self.status_var, foreground='gray').pack(side='left', padx=12)
@@ -923,10 +1056,17 @@ class ImportTool(tk.Tk):
             return
 
         filename, status, _ = chosen[0]
+        if status == 'imported':
+            messagebox.showinfo('Уже импортировано', 'Эта статья уже импортирована. Используйте обновление.')
+            return
         if status == 'site_only':
             messagebox.showinfo(
                 'Пропущено',
                 'Эта статья есть только на сайте, исходника в Obsidian нет.')
+            return
+        source_path = Path(self.notes_var.get()) / filename
+        if not source_path.exists():
+            messagebox.showerror('Ошибка', f'Исходный файл не найден:\n{source_path}')
             return
 
         selected_model = next((m for n, m in MODELS if n == self.model_var.get()), DEFAULT_MODEL)
@@ -936,6 +1076,52 @@ class ImportTool(tk.Tk):
             on_done=self._on_import_done,
             path_to_id=self._path_to_id,
             model=selected_model,
+            mode='import',
+        )
+
+    def _update(self):
+        chosen = [self._filtered[i] for i in self.listbox.curselection()]
+        if len(chosen) != 1:
+            messagebox.showwarning('Ничего не выбрано', 'Выберите ровно одну статью для обновления.')
+            return
+
+        filename, status, article_id = chosen[0]
+        if status == 'new':
+            messagebox.showinfo('Новая статья', 'Эта статья еще не импортирована. Используйте обычный импорт.')
+            return
+        if status == 'site_only':
+            messagebox.showinfo('Пропущено', 'Эта статья есть только на сайте, исходника в Obsidian нет.')
+            return
+        if not article_id:
+            messagebox.showerror('Ошибка', 'У выбранной статьи нет id. Заполните id в исходной заметке.')
+            return
+
+        source_path = Path(self.notes_var.get()) / filename
+        if not source_path.exists():
+            messagebox.showerror('Ошибка', f'Исходный файл не найден:\n{source_path}')
+            return
+        source_id = read_frontmatter(source_path).get('id', '').strip()
+        if source_id and source_id != article_id:
+            messagebox.showerror(
+                'Ошибка',
+                f'id исходника "{source_id}" не совпадает со статьей сайта "{article_id}".')
+            return
+
+        if not messagebox.askyesno(
+                'Подтверждение обновления',
+                f'Обновить статью "{article_id}" на сайте?\n\n'
+                'Будут обновлены русская версия, картинки и, если русский текст изменился, английская версия. '
+                'Старые неиспользуемые картинки будут удалены автоматически, если они больше не используются на сайте.'):
+            return
+
+        selected_model = next((m for n, m in MODELS if n == self.model_var.get()), DEFAULT_MODEL)
+        PipelineDialog(
+            self, filename,
+            self.notes_var.get(), self.images_var.get(),
+            on_done=self._on_import_done,
+            path_to_id=self._path_to_id,
+            model=selected_model,
+            mode='update',
         )
 
     def _delete_from_site(self):

@@ -48,6 +48,36 @@ def find_images_in_md(content):
     return images
 
 
+def article_paths(article_id):
+    return RU_DIR / f'{article_id}.md', EN_DIR / f'{article_id}.md'
+
+
+def find_images_used_by_site(exclude_article_id=None):
+    images = set()
+    for folder in [RU_DIR, EN_DIR]:
+        if not folder.exists():
+            continue
+        for path in folder.glob('*.md'):
+            if exclude_article_id and path.stem == exclude_article_id:
+                continue
+            images |= find_images_in_md(path.read_text(encoding='utf-8', errors='ignore'))
+    return images
+
+
+def copy_article_images(content, images_folder):
+    IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+    copied, missing = [], []
+    for img in sorted(find_images_in_md(content)):
+        src = Path(images_folder) / img
+        if src.exists():
+            import shutil
+            shutil.copy2(src, IMAGES_DIR / img)
+            copied.append(img)
+        else:
+            missing.append(img)
+    return copied, missing
+
+
 # ─── Frontmatter helpers ──────────────────────────────────────────────────────
 
 def read_frontmatter(path):
